@@ -36,7 +36,36 @@
     </style>	
 </head>
 <body>
-    <canvas id="gameCanvas" width="320" height="480"></canvas>
+	<canvas id="gameCanvas" width="320" height="480"></canvas>
+		<button id="startButton" style="
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			transform: translate(-50%, -50%);
+			padding: 10px 20px;
+			font-size: 20px;
+			background-color: #4CAF50;
+			color: white;
+			border: none;
+			border-radius: 5px;
+			cursor: pointer;
+			z-index: 10;
+		">Start Game</button>  
+		<button id="restartButton" style="
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			transform: translate(-50%, -50%);
+			padding: 10px 20px;
+			font-size: 20px;
+			background-color: #FF0000;
+			color: white;
+			border: none;
+			border-radius: 5px;
+			cursor: pointer;
+			z-index: 10;
+			display: none;
+		">Restart Game</button>		
     <script>
         const canvas = document.getElementById("gameCanvas");
         const ctx = canvas.getContext("2d");
@@ -60,6 +89,35 @@
 
         // Audio context setup
         let audioContext, analyser, microphone, dataArray;
+        let microphonePreference = localStorage.getItem('useMicrophone');
+		
+		let isMicrophoneInitialized = false; // Track microphone initialization
+
+		async function initAudio() {
+			if (isMicrophoneInitialized) return; // Prevent reinitialization
+
+			try {
+				audioContext = new (window.AudioContext || window.webkitAudioContext)();
+				const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+				analyser = audioContext.createAnalyser();
+				analyser.fftSize = 512;
+
+				microphone = audioContext.createMediaStreamSource(stream);
+				microphone.connect(analyser);
+
+				dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+				isMicrophoneInitialized = true; // Mark as initialized
+				localStorage.setItem('useMicrophone', true);
+			} catch (error) {
+				console.error("Microphone access failed:", error);
+
+				// Inform the user about the microphone requirement
+				alert("Microphone access is required to play this game. Please allow access in your browser settings.");
+				throw new Error("Microphone access denied");
+			}
+		}
 
         // Load assets
         const birdImg = new Image();
@@ -141,8 +199,8 @@
             // Move grounds
             grounds.forEach(ground => (ground.x -= 2));
 			
-			// Generate new grounds with gaps after 2 seconds of gameplay
-            if (Date.now() - gameStartTime > 2000) {
+			// Generate new grounds with gaps after 4 seconds of gameplay
+            if (Date.now() - gameStartTime > 4000) {
                 if (grounds.length === 0 || grounds[grounds.length - 1].x < canvas.width - 150) {
                     const hasGap = Math.random() > 0.5;
                     if (hasGap) {
@@ -171,112 +229,92 @@
         }
 
         // Render game elements
-        function renderGame() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);			
+        function renderGame() {            
+			const restartButton = document.getElementById("restartButton");
+            if (gameOver) {
+                restartButton.style.display = "block";
+                restartButton.addEventListener("click", () => {
+                    restartButton.style.display = "none";
+                    resetGame();
+                });
+            }
+			ctx.clearRect(0, 0, canvas.width, canvas.height);			
 			
             drawGrounds();
             drawBird();
 
             ctx.fillStyle = "#000";
             ctx.font = "20px Arial";
-            ctx.fillText("Score: " + score, 10, 30);			
-            
-			if (!gameStarted) {
-                ctx.fillStyle = "#333";
-                ctx.font = "25px Arial";
-                ctx.fillText("Press here to start!", canvas.width / 8, canvas.height / 2);
-            }
-
-            if (gameOver) {
-                ctx.fillStyle = "red";
-                ctx.font = "30px Arial";
-                ctx.fillText("Game Over!", canvas.width / 6, canvas.height / 2);
-            }		
-			
+            ctx.fillText("Score: " + score, 10, 30);  			
         }
 
-        function gameLoop() {
-            updateGame();
-            renderGame();
-            if (!gameOver) {
-                requestAnimationFrame(gameLoop);
-            }
-        }
+        let animationFrameId; // To store the requestAnimationFrame ID
 
-        // Initialize microphone and audio processing
-        async function initAudio() {
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+		function gameLoop() {
+			updateGame();
+			renderGame();
+			if (!gameOver) {
+				animationFrameId = requestAnimationFrame(gameLoop);
+			}
+		}	
 
-            analyser = audioContext.createAnalyser();
-            analyser.fftSize = 512;
-
-            microphone = audioContext.createMediaStreamSource(stream);
-            microphone.connect(analyser);
-
-            dataArray = new Uint8Array(analyser.frequencyBinCount);
-
-            gameStartTime = Date.now();
-			gameStarted = true;
-            gameLoop();
-        }
-
-        // Start game on interaction
         function startGame() {
-            if (!audioContext) {
-				audioContext = new (window.AudioContext || window.webkitAudioContext)();
-			}
-			
-			if (!gameStarted) {
-				initAudio(); // Start audio processing
-			}
-			
-			if (!gameLoopStarted) {
+		const startButton = document.getElementById("startButton");
+			if (!audioContext || !microphone) {
+				// Prompt for microphone access
+				initAudio().then(() => {
+					gameStartTime = Date.now();
+					gameStarted = true;
+					startButton.style.display = "none"; // Hide start button
+					gameLoop();
+				}).catch(() => {
+					// Prevent game start if microphone setup fails
+					console.log("Game will not start without microphone access.");
+				});
+			} else {
+				// If microphone is already initialized, start the game
 				gameStartTime = Date.now();
 				gameStarted = true;
-				gameLoopStarted = true; // Avoid multiple game loop calls
+				startButton.style.display = "none"; // Hide start button
 				gameLoop();
 			}
-        }		
+		}    
 		
 		// Initialize game
         function resizeCanvas() {
             const scale = Math.min(window.innerWidth / canvas.width, window.innerHeight / canvas.height);
-            canvas.style.width = `${canvas.width * scale}px`;
-            canvas.style.height = `${canvas.height * scale}px`;
+            canvas.style.width = `${(canvas.width * 0.8) * scale}px`;
+            canvas.style.height = `${(canvas.height * 0.8) * scale}px`;
         }
 		
-		window.addEventListener('resize', resizeCanvas);
-				
-		async function setupCameraBackground() {
-            const useCamera = confirm("Do you want to use your camera as the background?");
-            if (useCamera) {
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
-                    const video = document.createElement("video");
-                    video.srcObject = stream;
-                    video.play();
-
-                    video.addEventListener("play", () => {
-                        function drawCameraFrame() {
-                            if (video.readyState === video.HAVE_ENOUGH_DATA) {
-								ctx.globalAlpha = 0.5;
-                                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-								ctx.globalAlpha = 1.0;
-                            }
-                            requestAnimationFrame(drawCameraFrame);
-                        }
-                        drawCameraFrame();
-                    });
-                } catch (error) {
-                    alert("Unable to access the camera. Using default background.");
-                }
-            }
+		window.addEventListener('resize', resizeCanvas);		
+		
+		function resetGame() {
+			
+			if (animationFrameId) {
+				cancelAnimationFrame(animationFrameId); // Stop the previous game loop
+			}
+		
+            bird = { x: 20, y: 200, width: 30, height: 30, velocity: 0, isOnGround: false, airTime: 0 };
+            grounds = [];
+            score = 0;
+            gameOver = false;
+            gameStarted = false;
+            lastJumpTime = 0;
+            gameStartTime = Date.now();
+			
+            initializeGrounds();
+            renderGame();
+            startGame();
         }
 
         // Initialize game
-        function init() {
-			//setupCameraBackground();
+        function init() {			
+			const startButton = document.getElementById("startButton");
+            startButton.addEventListener("click", () => {                
+				startButton.style.display = "none"; 
+                startGame();
+            });			
 			initializeGrounds();		
             renderGame();
             window.addEventListener("click", startGame, { once: true });
