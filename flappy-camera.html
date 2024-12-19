@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice-Controlled Ground Jumper</title>
+    <style>
+        /* General game styling */
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: skyblue;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: Arial, sans-serif;
+        }
+
+        canvas {
+            border: 2px solid #000;
+            background-color: #87CEEB;            
+        }
+
+        #startButton, #restartButton {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 10px 20px;
+            font-size: 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            z-index: 10;
+        }
+
+        #restartButton {
+            background-color: #FF0000;
+            display: none;
+        }
+		
+		video {
+            display: none; /* Hide the video element */
+        }
+    </style>    
+</head>
+<body>
+	<video id="cameraFeed" autoplay playsinline></video>
+    <canvas id="gameCanvas" width="320" height="480"></canvas>
+    <button id="startButton">Start Game</button>  
+    <button id="restartButton">Restart Game</button>      
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+		const video = document.getElementById("cameraFeed");		
+
+        // Game variables
+        const GRAVITY = 0.2;
+        const BASE_FLAP = -4;
+        const MAX_VOLUME = 0.2; // Max expected microphone volume
+        const GROUND_MIN_WIDTH = 50;
+        const GROUND_MAX_WIDTH = 100;
+        const GROUND_HEIGHT = 20;
+        const WATER_HEIGHT = canvas.height * 0.2; // 20% of canvas height
+        const GROUND_MIN_Y = canvas.height - WATER_HEIGHT - 100; // Minimum ground Y above water
+        const GROUND_MAX_Y = canvas.height - WATER_HEIGHT - 20;  // Maximum ground Y above water
+        const MAX_AIR_TIME = 3500; // 1 sec max air time
+
+        let bird = { x: 20, y: 200, width: 30, height: 30, velocity: 0, isOnGround: false, airTime: 0 };
+        let grounds = [];
+        let score = 0;
+        let gameOver = false;
+        let gameStarted = false;
+        let gameStartTime = 0;
+
+        // Birds in the sky array
+        let skyBirds = [];
+
+        // Audio context setup
+        let audioContext, analyser, microphone, dataArray;
+        let isMicrophoneInitialized = false; // Track microphone initialization
+		
+		// Request access to the camera
+        async function initCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+                video.srcObject = stream;
+            } catch (error) {
+                console.error("Camera access failed:", error);
+                alert("Camera access is required for this game.");
+            }
+        }	
+
+        async function initAudio() {
+            if (isMicrophoneInitialized) return; // Prevent reinitialization
+
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 512;
+
+                microphone = audioContext.createMediaStreamSource(stream);
+                microphone.connect(analyser);
+
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+                isMicrophoneInitialized = true; // Mark as initialized
+            } catch (error) {
+                console.error("Microphone access failed:", error);
+                alert("Microphone access is required to play this game. Please allow access in your browser settings.");
+                throw new Error("Microphone access denied");
+            }
+        }
+
+        // Load assets
+        const birdImg = new Image();
+        birdImg.src = "https://cdn-icons-png.flaticon.com/512/616/616489.png"; // Bird icon
+        const groundColor = "#8B4513";
+        const waterColor = "#1E90FF";
+
+        // Function to draw the bird
+        function drawBird() {
+            ctx.drawImage(birdImg, bird.x, bird.y, bird.width, bird.height);
+        }
+		
+		// Draw the camera feed as the background
+        function drawCameraFeed() {
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        }
+
+        // Function to generate a new ground with random height and width
+        function createGround(x) {
+            const y = Math.random() * (GROUND_MAX_Y - GROUND_MIN_Y) + GROUND_MIN_Y;
+            const width = Math.random() * (GROUND_MAX_WIDTH - GROUND_MIN_WIDTH) + GROUND_MIN_WIDTH;
+            return { x, y, width };
+        }
+
+        // Initialize grounds immediately
+        function initializeGrounds() {
+            let x = 0;
+            while (x < canvas.width) {
+                const ground = createGround(x);
+                grounds.push(ground);
+                x += ground.width + 150; // Gap between grounds
+            }
+        }
+
+        // Function to draw the ground
+        function drawGrounds() {
+            grounds.forEach(ground => {
+                ctx.fillStyle = groundColor;
+                ctx.fillRect(ground.x, ground.y, ground.width, GROUND_HEIGHT);
+            });
+        }
+        
+        // Function to draw waves
+        function drawWaves() {
+            const waveHeight = 10; // Height of the wave
+            const waveLength = 40; // Length of each wave segment
+            const waveSpeed = 2;   // Speed of the wave movement
+
+            const currentTime = Date.now() / 1000; // Current time in seconds
+            const offset = currentTime * waveSpeed;
+
+            ctx.beginPath();
+            for (let x = 0; x <= canvas.width; x++) {
+                const y = Math.sin((x / waveLength) + offset) * waveHeight;
+                ctx.lineTo(x, canvas.height - WATER_HEIGHT + y);
+            }
+            ctx.lineTo(canvas.width, canvas.height); // Bottom-right corner
+            ctx.lineTo(0, canvas.height);           // Bottom-left corner
+            ctx.closePath();
+
+            ctx.fillStyle = "rgba(30, 144, 255, 0.6)"; // Semi-transparent water color
+            ctx.fill();
+        }
+
+        // Function to create birds in the sky
+        function createSkyBirds(count) {
+            for (let i = 0; i < count; i++) {
+                skyBirds.push({
+                    x: Math.random() * canvas.width, // Random initial x position
+                    y: Math.random() * canvas.height * 0.4, // Random y position (top 40% of the canvas)
+                    speed: 1 + Math.random() * 2, // Random speed
+                });
+            }
+        }
+
+        // Function to draw birds in the sky
+        function drawSkyBirds() {
+            ctx.strokeStyle = "black";
+            ctx.lineWidth = 2;
+
+            skyBirds.forEach(bird => {
+                // Draw a simple "V" shape for each bird
+                ctx.beginPath();
+                ctx.moveTo(bird.x, bird.y);
+                ctx.lineTo(bird.x - 5, bird.y + 5);
+                ctx.moveTo(bird.x, bird.y);
+                ctx.lineTo(bird.x + 5, bird.y + 5);
+                ctx.stroke();
+            });
+        }
+
+        // Function to update bird positions
+        function updateSkyBirds() {
+            skyBirds.forEach(bird => {
+                bird.x -= bird.speed; // Move birds to the left
+                if (bird.x < -10) {
+                    // If a bird goes off-screen, reset its position to the right
+                    bird.x = canvas.width + 10;
+                    bird.y = Math.random() * canvas.height * 0.4;
+                }
+            });
+        }
+
+        // Update game logic
+        function updateGame() {
+            if (!gameStarted || gameOver) return;
+
+            bird.velocity += GRAVITY;
+            bird.y += bird.velocity;
+
+            // Constrain bird within canvas
+            if (bird.y < 0) {
+                bird.y = 0;                
+            }
+
+            if (bird.y > canvas.height) {
+                gameOver = true;                
+            }
+
+            bird.isOnGround = false;
+            grounds.forEach(ground => {
+                if (
+                    bird.x < ground.x + ground.width &&
+                    bird.x + bird.width > ground.x &&
+                    bird.y + bird.height >= ground.y &&
+                    bird.y < ground.y + GROUND_HEIGHT
+                ) {
+                    bird.isOnGround = true;
+                    bird.y = ground.y - bird.height; // Align bird on the ground
+                    bird.velocity = 0;
+                    bird.airTime = 0;
+                } else if (
+                    bird.x < ground.x + ground.width &&
+                    bird.x + bird.width > ground.x &&
+                    bird.y >= ground.y + GROUND_HEIGHT
+                ) {
+                    bird.velocity = Math.max(bird.velocity, 1); // Push the bird down if it hits from below
+                }
+            });
+
+            // Adjust bird's flap based on volume
+            if (dataArray) {
+                analyser.getByteFrequencyData(dataArray);
+                const volume = dataArray.reduce((sum, val) => sum + val, 0) / dataArray.length / 255;
+
+                if (volume > 0.05) { // If there's noise and bird is on ground
+                    const flapStrength = BASE_FLAP * (volume / MAX_VOLUME);
+                    bird.velocity = Math.max(flapStrength, -8); // Limit upward velocity
+                }
+            }
+
+            // Limit air time
+            if (!bird.isOnGround) {
+                bird.airTime += 16.67; // Approximate frame time in milliseconds
+                if (bird.airTime >= MAX_AIR_TIME) {
+                    bird.velocity = 1; // Force the bird to fall
+                }
+            }
+
+            // Move grounds
+            grounds.forEach(ground => (ground.x -= 2));
+
+            // Generate new grounds with random widths and gaps
+            if (grounds.length === 0 || grounds[grounds.length - 1].x < canvas.width - 150) {
+                const newGround = createGround(canvas.width);
+                grounds.push(newGround);
+            }
+
+            // Remove grounds that go off screen
+            grounds = grounds.filter(ground => ground.x + ground.width > 0);
+
+            // Update sky birds
+            updateSkyBirds();
+			
+			// Check for collision with sky birds
+			skyBirds.forEach(skyBird => {
+				if (
+					bird.x < skyBird.x + 10 && // Adjusted bird size for collision
+					bird.x + bird.width > skyBird.x - 10 &&
+					bird.y < skyBird.y + 5 &&
+					bird.y + bird.height > skyBird.y - 5
+				) {
+					gameOver = true; // End game on collision
+				}
+			});
+
+            // Update score
+            grounds.forEach(ground => {
+                if (ground.x + ground.width < bird.x && !ground.passed) {
+                    ground.passed = true;
+                    score++;
+                }
+            });
+        }
+
+        // Render game elements
+        function renderGame() {            
+            const restartButton = document.getElementById("restartButton");
+            if (gameOver) {
+                restartButton.style.display = "block";
+                restartButton.addEventListener("click", () => {
+                    restartButton.style.display = "none";
+                    resetGame();
+                });
+            }
+            ctx.clearRect(0, 0, canvas.width, canvas.height);            
+
+			// Draw camera feed
+            drawCameraFeed();
+			
+            drawWaves();
+            drawGrounds();
+            drawBird();
+            drawSkyBirds();
+
+            ctx.fillStyle = "#000";
+            ctx.font = "20px Arial";
+            ctx.fillText("Score: " + score, 10, 30);  			
+        }
+
+        let animationFrameId; // To store the requestAnimationFrame ID
+
+        function gameLoop() {
+            updateGame();
+            renderGame();
+            if (!gameOver) {
+                animationFrameId = requestAnimationFrame(gameLoop);
+            }
+        }    
+
+        function startGame() {
+            const startButton = document.getElementById("startButton");
+            if (!audioContext || !microphone) {
+                // Prompt for microphone access
+                initAudio().then(() => {
+                    gameStartTime = Date.now();
+                    gameStarted = true;
+                    startButton.style.display = "none"; // Hide start button
+                    gameLoop();
+                }).catch(() => {
+                    console.log("Game will not start without microphone access.");
+                });
+            } else {
+                // If microphone is already initialized, start the game
+                gameStartTime = Date.now();
+                gameStarted = true;
+                startButton.style.display = "none"; // Hide start button
+                gameLoop();
+            }
+			
+			initCamera();
+        }    
+
+        function resetGame() {
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId); // Stop the previous game loop
+            }
+
+            bird = { x: 20, y: 200, width: 30, height: 30, velocity: 0, isOnGround: false, airTime: 0 };
+            grounds = [];
+            score = 0;
+            gameOver = false;
+            gameStarted = false;
+            gameStartTime = Date.now();
+
+            initializeGrounds();
+            skyBirds = [];
+            createSkyBirds(3); // Reset sky birds
+            renderGame();
+            startGame();
+        }
+
+        // Initialize game
+        function resizeCanvas() {
+            const scale = Math.min(window.innerWidth / canvas.width, window.innerHeight / canvas.height);
+            canvas.style.width = `${(canvas.width * 0.8) * scale}px`;
+            canvas.style.height = `${(canvas.height * 0.8) * scale}px`;
+        }
+
+        function init() {            
+            const startButton = document.getElementById("startButton");
+            startButton.addEventListener("click", () => {                
+                startButton.style.display = "none"; 
+                startGame();
+            });            
+            initializeGrounds();        
+            createSkyBirds(1);
+            renderGame();            
+        }
+
+        window.onload = () => {
+            resizeCanvas();
+            init();
+        };
+
+        window.addEventListener('resize', resizeCanvas);
+    </script>
+</body>
+</html>
