@@ -55,7 +55,10 @@
     <script>
         const canvas = document.getElementById("gameCanvas");
         const ctx = canvas.getContext("2d");
-		const video = document.getElementById("cameraFeed");		
+		const video = document.getElementById("cameraFeed");	
+
+		let countdown = 3; // Start the countdown from 3
+		let countdownInterval;		
 
         // Game variables
         const GRAVITY = 0.2;
@@ -85,14 +88,30 @@
 		
 		// Request access to the camera
         async function initCamera() {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-                video.srcObject = stream;
-            } catch (error) {
-                console.error("Camera access failed:", error);
-                alert("Camera access is required for this game.");
-            }
-        }	
+			try {
+				const constraints = {
+					video: {
+						width: { ideal: 1280 },
+						height: { ideal: 720 },
+						facingMode: "user" // Use front camera if available
+					}
+				};
+
+				const stream = await navigator.mediaDevices.getUserMedia(constraints);
+				video.srcObject = stream;
+
+				// Safari-specific fix: play the video explicitly
+				await video.play();
+			} catch (error) {
+				console.error("Camera access failed:", error);
+				alert("Unable to access the camera. Please check your browser settings.");
+			}
+		}	
+		
+		// Draw the camera feed as the background
+        function drawCameraFeed() {
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        }
 
         async function initAudio() {
             if (isMicrophoneInitialized) return; // Prevent reinitialization
@@ -128,10 +147,7 @@
             ctx.drawImage(birdImg, bird.x, bird.y, bird.width, bird.height);
         }
 		
-		// Draw the camera feed as the background
-        function drawCameraFeed() {
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        }
+		
 
         // Function to generate a new ground with random height and width
         function createGround(x) {
@@ -179,6 +195,29 @@
             ctx.fillStyle = "rgba(30, 144, 255, 0.6)"; // Semi-transparent water color
             ctx.fill();
         }
+		
+		function renderCountdown() {
+			ctx.clearRect(0, 0, canvas.width, canvas.height);
+			drawCameraFeed();
+			ctx.fillStyle = "#FFFFFF";
+			ctx.font = "48px Arial";
+			ctx.textAlign = "center";
+			ctx.fillText(countdown, canvas.width / 2, canvas.height / 2);
+		}
+
+		function startCountdown(callback) {
+			renderCountdown();
+
+			countdownInterval = setInterval(() => {
+				countdown--;
+				if (countdown > 0) {
+					renderCountdown();
+				} else {
+					clearInterval(countdownInterval);
+					callback();
+				}
+			}, 1000);
+		}
 
         // Function to create birds in the sky
         function createSkyBirds(count) {
@@ -354,7 +393,12 @@
                     gameStartTime = Date.now();
                     gameStarted = true;
                     startButton.style.display = "none"; // Hide start button
-                    gameLoop();
+					
+					initCamera();
+                    
+					startCountdown(() => {
+					gameLoop(); // Start the game after the countdown
+					});
                 }).catch(() => {
                     console.log("Game will not start without microphone access.");
                 });
@@ -366,7 +410,7 @@
                 gameLoop();
             }
 			
-			initCamera();
+			
         }    
 
         function resetGame() {
