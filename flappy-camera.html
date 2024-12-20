@@ -111,8 +111,18 @@
 		
 		// Draw the camera feed as the background
         function drawCameraFeed() {
-            ctx.globalAlpha = 0.5; // Set opacity to 50%
+			
+			ctx.save(); // Save the current canvas state
+
+			// Flip the canvas horizontally
+			ctx.scale(-1, 1);
+			ctx.translate(-canvas.width, 0);
+
+			// Draw the video feed
 			ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+			
+			ctx.restore(); // Restore the canvas state to avoid affecting other drawings
+            ctx.globalAlpha = 0.5; // Set opacity to 50%			
 			ctx.globalAlpha = 1.0; //
         }
 
