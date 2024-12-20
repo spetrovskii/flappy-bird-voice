@@ -48,7 +48,8 @@
     </style>    
 </head>
 <body>
-	<video id="cameraFeed" autoplay playsinline></video>
+	<video id="cameraFeed" autoplay playsinline muted></video>
+	<div id="blueTint"></div>
     <canvas id="gameCanvas" width="320" height="480"></canvas>
     <button id="startButton">Start Game</button>  
     <button id="restartButton">Restart Game</button>      
@@ -110,7 +111,9 @@
 		
 		// Draw the camera feed as the background
         function drawCameraFeed() {
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            ctx.globalAlpha = 0.5; // Set opacity to 50%
+			ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+			ctx.globalAlpha = 1.0; //
         }
 
         async function initAudio() {
@@ -260,7 +263,7 @@
 
         // Update game logic
         function updateGame() {
-            if (!gameStarted || gameOver) return;
+            //if (!gameStarted || gameOver) return;
 
             bird.velocity += GRAVITY;
             bird.y += bird.velocity;
@@ -291,7 +294,7 @@
                     bird.x + bird.width > ground.x &&
                     bird.y >= ground.y + GROUND_HEIGHT
                 ) {
-                    bird.velocity = Math.max(bird.velocity, 1); // Push the bird down if it hits from below
+                    bird.velocity = Math.max(bird.velocity, 1);
                 }
             });
 
@@ -370,9 +373,9 @@
             drawBird();
             drawSkyBirds();
 
-            ctx.fillStyle = "#000";
+            ctx.fillStyle = "#FFFFFF";
             ctx.font = "20px Arial";
-            ctx.fillText("Score: " + score, 10, 30);  			
+            ctx.fillText("Score: " + score, 45, 15);  			
         }
 
         let animationFrameId; // To store the requestAnimationFrame ID
@@ -439,15 +442,22 @@
             canvas.style.height = `${(canvas.height * 0.8) * scale}px`;
         }
 
-        function init() {            
+        function init() { 		
+			// Set text properties
+			ctx.font = "28px Arial";
+			ctx.fillStyle = "#FFFFFF"; // White color
+			ctx.textAlign = "center"; // Horizontally center the text
+			ctx.textBaseline = "middle"; // Vertically center the text
+			ctx.fillText("SEAGULL THE GAME", 165, 150);  
+		
             const startButton = document.getElementById("startButton");
             startButton.addEventListener("click", () => {                
                 startButton.style.display = "none"; 
                 startGame();
-            });            
-            initializeGrounds();        
-            createSkyBirds(1);
-            renderGame();            
+            }); 
+
+			createSkyBirds(3);
+                     
         }
 
         window.onload = () => {
